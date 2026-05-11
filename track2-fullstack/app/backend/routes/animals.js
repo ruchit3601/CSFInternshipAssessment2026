@@ -3,13 +3,12 @@ const router = express.Router();
 const { db } = require('../db');
 
 router.get('/', (req, res) => {
-  const page = parseInt(req.query.page) || 0;
-const limit = parseInt(req.query.limit) || 10;
-const offset = page * limit;
-const animals = db.prepare(
-  'SELECT * FROM animals LIMIT ? OFFSET ?'
-).all(limit, offset);
-
+  const page  = parseInt(req.query.page)  || 0;
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = page * limit;
+  const animals = db.prepare(
+    'SELECT * FROM animals LIMIT ? OFFSET ?'
+  ).all(limit, offset);
   const result = animals.map(animal => {
     const latestEvent = db.prepare(`
       SELECT * FROM health_events
@@ -19,27 +18,29 @@ const animals = db.prepare(
     `).get(animal.id);
     return { ...animal, latest_health_event: latestEvent ?? null };
   });
-
   res.json(result);
 });
 
 router.post('/', (req, res) => {
   const { name, tag_number, breed, date_of_birth, paddock_id } = req.body;
-
   if (!name || !tag_number) {
     return res.status(400).json({ error: 'name and tag_number are required' });
   }
-
   if (paddock_id) {
+    const paddock = db.prepare('SELECT * FROM paddocks WHERE id = ?').get(paddock_id);
+    if (!paddock) {
+      return res.status(404).json({ error: 'Paddock not found' });
+    }
+    if (paddock.animal_count >= paddock.capacity) {
+      return res.status(409).json({ error: 'Paddock is at capacity' });
+    }
     db.prepare(
       'UPDATE paddocks SET animal_count = animal_count + 1 WHERE id = ?'
     ).run(paddock_id);
   }
-
   const result = db.prepare(
     'INSERT INTO animals (name, tag_number, breed, date_of_birth, paddock_id) VALUES (?, ?, ?, ?, ?)'
   ).run(name, tag_number, breed ?? null, date_of_birth ?? null, paddock_id ?? null);
-
   const animal = db.prepare('SELECT * FROM animals WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(animal);
 });
@@ -63,7 +64,27 @@ router.put('/:id', (req, res) => {
   };
 
   if (updates.paddock_id !== animal.paddock_id) {
+    // Decrement old paddock
+    if (animal.paddock_id) {
+      db.prepare(
+        'UPDATE paddocks SET animal_count = animal_count - 1 WHERE id = ?'
+      ).run(animal.paddock_id);
+    }
+    // Check capacity and increment new paddock
     if (updates.paddock_id) {
+      const newPaddock = db.prepare('SELECT * FROM paddocks WHERE id = ?').get(updates.paddock_id);
+      if (!newPaddock) {
+        return res.status(404).json({ error: 'Paddock not found' });
+      }
+      if (newPaddock.animal_count >= newPaddock.capacity) {
+        // Roll back the decrement we just did
+        if (animal.paddock_id) {
+          db.prepare(
+            'UPDATE paddocks SET animal_count = animal_count + 1 WHERE id = ?'
+          ).run(animal.paddock_id);
+        }
+        return res.status(409).json({ error: 'Paddock is at capacity' });
+      }
       db.prepare(
         'UPDATE paddocks SET animal_count = animal_count + 1 WHERE id = ?'
       ).run(updates.paddock_id);
@@ -83,13 +104,11 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const animal = db.prepare('SELECT * FROM animals WHERE id = ?').get(req.params.id);
   if (!animal) return res.status(404).json({ error: 'Animal not found' });
-
   if (animal.paddock_id) {
     db.prepare(
       'UPDATE paddocks SET animal_count = animal_count - 1 WHERE id = ?'
     ).run(animal.paddock_id);
   }
-
   db.prepare('DELETE FROM animals WHERE id = ?').run(req.params.id);
   res.json({ message: 'deleted' });
 });
@@ -97,7 +116,6 @@ router.delete('/:id', (req, res) => {
 router.get('/:id/health-events', (req, res) => {
   const animal = db.prepare('SELECT * FROM animals WHERE id = ?').get(req.params.id);
   if (!animal) return res.status(404).json({ error: 'Animal not found' });
-
   const events = db.prepare(
     'SELECT * FROM health_events WHERE animal_id = ? ORDER BY date DESC'
   ).all(req.params.id);
@@ -107,18 +125,45 @@ router.get('/:id/health-events', (req, res) => {
 router.post('/:id/health-events', (req, res) => {
   const animal = db.prepare('SELECT * FROM animals WHERE id = ?').get(req.params.id);
   if (!animal) return res.status(404).json({ error: 'Animal not found' });
-
   const { event_type, notes, date, vet_name } = req.body;
   if (!event_type || !date) {
     return res.status(400).json({ error: 'event_type and date are required' });
   }
-
   const result = db.prepare(
     'INSERT INTO health_events (animal_id, event_type, notes, date, vet_name) VALUES (?, ?, ?, ?, ?)'
   ).run(req.params.id, event_type, notes ?? null, date, vet_name ?? null);
-
   const event = db.prepare('SELECT * FROM health_events WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(event);
+});
+
+router.get('/:id/weights', (req, res) => {
+  const animal = db.prepare('SELECT * FROM animals WHERE id = ?').get(req.params.id);
+  if (!animal) return res.status(404).json({ error: 'Animal not found' });
+  const weights = db.prepare(
+    'SELECT * FROM animal_weights WHERE animal_id = ? ORDER BY date DESC'
+  ).all(req.params.id);
+  res.json(weights);
+});
+
+router.post('/:id/weights', (req, res) => {
+  const animal = db.prepare('SELECT * FROM animals WHERE id = ?').get(req.params.id);
+  if (!animal) return res.status(404).json({ error: 'Animal not found' });
+  const { weight_kg, date, notes } = req.body;
+  if (weight_kg === undefined || weight_kg === null) {
+    return res.status(422).json({ error: 'weight_kg is required' });
+  }
+  const parsed = parseFloat(weight_kg);
+  if (isNaN(parsed) || parsed <= 0) {
+    return res.status(422).json({ error: 'weight_kg must be a positive number' });
+  }
+  if (!date) {
+    return res.status(422).json({ error: 'date is required' });
+  }
+  const result = db.prepare(
+    'INSERT INTO animal_weights (animal_id, weight_kg, date, notes) VALUES (?, ?, ?, ?)'
+  ).run(req.params.id, parsed, date, notes ?? null);
+  const record = db.prepare('SELECT * FROM animal_weights WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(record);
 });
 
 module.exports = router;
