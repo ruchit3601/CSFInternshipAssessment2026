@@ -39,7 +39,7 @@ function initDb() {
       weight_kg  REAL    NOT NULL CHECK(weight_kg > 0),
       date       TEXT    NOT NULL,
       notes      TEXT
-    );git commit -am "feat: add animal_weights table to schema"
+    );
   `);
 }
 
