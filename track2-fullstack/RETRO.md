@@ -23,4 +23,4 @@
 
 The frontend has no error display for most API failures — errors are silently
 swallowed except in the weight form. Fixing this consistently across all forms
-would require restructuring `app.js` and was out of scope for this assessment.
+would require restructuring `app.js` and was out of scope for this assessment.cd..
