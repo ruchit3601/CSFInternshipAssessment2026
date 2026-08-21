@@ -8,7 +8,6 @@ This repository contains two take-home assessment tracks. Complete the track you
 | Fullstack | `track2-fullstack/` | Audit, fix, and extend the FarmTracker web app. |
 
 Each track includes its own brief with detailed requirements and deliverables. Read the relevant brief before starting work.
-
 ## How To Submit
 
 Submit your work by opening a pull request against the `main` branch of this repository.
