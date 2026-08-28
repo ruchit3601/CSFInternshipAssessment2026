@@ -9,11 +9,9 @@ This repository contains two take-home assessment tracks. Complete the track you
 
 Each track includes its own brief with detailed requirements and deliverables. Read the relevant brief before starting work.
 ## How To Submit
-
 Submit your work by opening a pull request against the `main` branch of this repository.
 
 Your pull request description must include:
-
 - Your full name
 - Your email address
 - The assessment track you completed
